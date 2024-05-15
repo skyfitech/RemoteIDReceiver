@@ -444,3 +444,193 @@ class DjiParser(Parser):
         except Exception as err:
             logging.warning(f"Error while parsing values for DJI Remote ID. extra: {err}")
             return None
+
+class AstmF3411Parser(Parser):
+    """
+    Class to parse a Wi-Fi packet according to ASTM F3411-22a standard.
+    """
+    _msg_type_0_format: str = '<Bc20s3s'
+    _msg_type_1_format: str = '<BcBBbiiHHHccHcc'
+    _msg_type_4_format: str = '<BciiHBHH8s'
+
+    msg_size: int = 25
+    msg_type_one: int = 1
+    msg_type_four: int = 4
+    oui: str = "FA:0B:BC"
+
+    @staticmethod
+    def _bytes_to_bits(byte_list: list[str]) -> list[int]:
+        bin_string = ' '.join(f'{x:08b}' for x in byte_list)
+        bin_arr = [int(bit) for bit in bin_string]
+        bin_arr.reverse()
+        return bin_arr
+
+    @staticmethod
+    def _to_location(val: int) -> float:
+        return val / 10 ** 7
+
+    @staticmethod
+    def _check_header(type_byte, check_type) -> None:
+        msg_type = struct.unpack("<1s", type_byte)[0]
+        if msg_type != check_type:
+            msg_type = hex(int.from_bytes(msg_type, 'little'))
+            check_type = hex(int.from_bytes(check_type, 'little'))
+            raise ParseRemoteIdError(f"Malformed Packet. Expected message type {check_type} but was {msg_type}")
+
+    @staticmethod
+    def _parse_type_0(packet: Packet, start: int = None, end: int = None) -> str:
+        """
+        Method to parse Message Type 0 - Basic ID Message. Defined by ASTM F3411-22a Remote ID Format.
+
+        Args:
+            packet (Packet): Wi-Fi packet.
+            start (int): Start position in packet (inclusive). defaults to None.
+            end (int): End position in packet (exclusive). defaults to None.
+
+        Returns:
+            str: Serial number of the Remote ID.
+        """
+        AstmF3411Parser._check_header(packet[start:start + 1], b'\x00')
+        try:
+            (_, _, serial_number, _) = struct.unpack(AstmF3411Parser._msg_type_0_format, packet[start:end])
+        except struct.error as err:
+            raise ParseRemoteIdError(f"Unable to unpack message type 0. extra: {err}")
+        except ValueError as err:
+            raise ParseRemoteIdError(err)
+
+        serial_number = serial_number.decode().rstrip('\x00').strip()
+        if not serial_number:
+            raise ParseRemoteIdError(f"serial number contains spaces or is wrong formatted")
+
+        return serial_number
+
+    @staticmethod
+    def _parse_type_1(packet: Packet, start: int = None, end: int = None) -> tuple:
+        """
+        Method to parse Message Type 1 - Location/Vector Message. Defined by ASTM F3411-22a Remote ID Format.
+
+        Args:
+            packet (Packet): Wi-Fi packet.
+            start (int): Start position in packet (inclusive). defaults to None.
+            end (int): End position in packet (exclusive). defaults to None.
+
+        Returns:
+            tuple: Location/vector information.
+        """
+        AstmF3411Parser._check_header(packet[start:start + 1], b'\x10')
+        try:
+            unpacked_values = struct.unpack(AstmF3411Parser._msg_type_1_format, packet[start:end])
+        except struct.error as err:
+            raise ParseRemoteIdError(f"Unable to unpack message type 1. extra: {err}")
+
+        try:
+            (version, status_flags, track_dir, speed, v_speed, lat, lng, _, _, height, _, _, timestamp, _,
+             _) = unpacked_values
+        except ValueError as err:
+            raise ParseRemoteIdError(err)
+
+        try:
+            status_flags = AstmF3411Parser._bytes_to_bits(status_flags)
+            track_dir = track_dir + 180 if status_flags[1] == 1 else track_dir
+            speed = speed * 0.25 if status_flags[0] == 0 else (track_dir * 0.75) + (255 * 0.25)
+            v_speed = v_speed * 0.5
+            lat = AstmF3411Parser._to_location(lat)
+            lng = AstmF3411Parser._to_location(lng)
+            height = (height * 0.5) - 1000
+
+            min_ = math.floor(timestamp / 600)
+            sec = round((timestamp - min_ * 600) / 10)
+            now = datetime.now()
+            tenth_second = now.minute * 600 + now.second * 10
+            if timestamp > tenth_second:
+                timestamp = now.replace(hour=now.hour-1, minute=min_, second=sec)
+            else:
+                timestamp = now.replace(minute=min_, second=sec)
+        except Exception as err:
+            raise ParseRemoteIdError(f"Error while parsing values for ASTM F3411-22a Remote ID. extra: {err}")
+
+        return lng, lat, height, track_dir, speed, v_speed, timestamp
+
+    @staticmethod
+    def _parse_type_4(packet: Packet, start: int, end: int) -> Position:
+        """
+        Method to parse Message Type 4 - System Message. Defined by ASTM F3411-22a Remote ID Format.
+
+        Args:
+            packet (Packet): Wi-Fi packet.
+            start (int): Start position in packet (inclusive). defaults to None.
+            end (int): End position in packet (exclusive). defaults to None.
+
+        Returns:
+            Position: Pilot location information.
+        """
+        AstmF3411Parser._check_header(packet[start:start + 1], b'\x40')
+        try:
+            unpacked_values = struct.unpack(AstmF3411Parser._msg_type_4_format, packet[start:end])
+        except struct.error as err:
+            raise ParseRemoteIdError(f"Unable to unpack message type 4. extra: {err}")
+
+        try:
+            (_, _, pilot_lat, pilot_lng, _, _, _, _, _) = unpacked_values
+        except ValueError as err:
+            raise ParseRemoteIdError(err)
+
+        return Position(lng=AstmF3411Parser._to_location(pilot_lng),
+                        lat=AstmF3411Parser._to_location(pilot_lat),
+                        default=True)
+
+    @staticmethod
+    def parse_static_msg(packet: Packet, oui: str) -> Optional[RemoteId]:
+        """
+        Method to parse static messages. Static messages consist of Message Types 0 , 1, 4 and 5 and contain
+        information about the unmanned aircraft as well as its location and its pilot's location.
+
+        Args:
+            packet (Packet): Wi-Fi packet.
+            oui (str): Vendor OUI.
+
+        Returns:
+            Optional[RemoteId]: Parsed RemoteId or None.
+        """
+        """unpack Basic ID Message values"""
+        message_start = Parser.header_size
+        message_end = Parser.header_size + AstmF3411Parser.msg_size
+        try:
+            serial_number = AstmF3411Parser._parse_type_0(packet, message_start, message_end)
+        except ParseRemoteIdError as err:
+            logging.warning(err)
+            return None
+
+        """unpack Location/Vector Message values"""
+        message_start = message_end
+        message_end = message_end + AstmF3411Parser.msg_size
+        try:
+            (lng, lat, height, track_dir, speed, v_speed, timestamp) = AstmF3411Parser._parse_type_1(packet,
+                                                                                                   message_start,
+                                                                                                   message_end)
+        except ParseRemoteIdError as err:
+            logging.warning(err)
+            return None
+
+        try:
+            drone_pos = Position(lat=lat, lng=lng)
+        except ValueError as err:
+            logging.warning(f"Parsing of drone position failed with error: {err}")
+            return None
+
+        """unpack System Message values"""
+        message_start = message_end
+        message_end = message_end + AstmF3411Parser.msg_size
+        try:
+            pilot_pos = AstmF3411Parser._parse_type_4(packet, message_start, message_end)
+        except ParseRemoteIdError as err:
+            logging.warning(err)
+            logging.info("Setting pilot location to None.")
+            pilot_pos = Position()
+
+        spoofed = is_spoofed(drone_pos, pilot_pos)
+
+        return RemoteId(lng=lng, lat=lat, height=height, yaw=track_dir, x_speed=speed, y_speed=v_speed,
+                        pilot_lat=pilot_pos.lat, pilot_lng=pilot_pos.lng, timestamp=timestamp, oui=oui,
+                        uuid=serial_number, serial_number=serial_number, spoofed=spoofed)
+

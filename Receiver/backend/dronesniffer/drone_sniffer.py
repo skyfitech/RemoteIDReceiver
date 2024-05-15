@@ -4,10 +4,11 @@ from scapy.layers.dot11 import Dot11Beacon, Dot11EltVendorSpecific
 from scapy.packet import Packet
 
 from info_handler import save_drone_info
-from parser_handler import DefaultHandler, DjiHandler, AsdStanHandler
+from parser_handler import DefaultHandler, DjiHandler, AsdStanHandler, AstmF3411Handler
 from parsers import Parser
 
-handler = AsdStanHandler(DjiHandler(DefaultHandler(None)))
+# Add AstmF3411Handler to the chain of responsibility
+handler = AstmF3411Handler(AsdStanHandler(DjiHandler(DefaultHandler(None))))
 home_locations = {}
 
 
@@ -21,7 +22,7 @@ def filter_frames(packet: Packet) -> None:
     Args:
         packet (Packet): Wi-Fi frame.
     """
-    #if packet.haslayer(Dot11Beacon):  # Monitor 802.11 beacon traffic
+    # if packet.haslayer(Dot11Beacon):  # Monitor 802.11 beacon traffic
     if packet.haslayer(Dot11EltVendorSpecific):  # check vendor specific ID -> 221
         vendor_spec: Dot11EltVendorSpecific = packet.getlayer(Dot11EltVendorSpecific)
         while vendor_spec:

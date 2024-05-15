@@ -6,12 +6,12 @@ from scapy.packet import Packet
 
 from exceptions import ParseRemoteIdError
 from models import RemoteId
-from parsers import DjiParser, AsdStanParser
+from parsers import DjiParser, AsdStanParser, AstmF3411Parser
 
 
 class Handler(object):
     """
-    Interface for the handler class used in the chain of responsibility patter.
+    Interface for the handler class used in the chain of responsibility pattern.
     """
     def __init__(self, nxt):
         self._nxt = nxt
@@ -127,6 +127,35 @@ class AsdStanHandler(Handler):
             return AsdStanParser.parse_static_msg(packet, oui)
         else:
             logging.info("Unknown ASD-STAN message type detected")
+            return None
+
+    def is_drone(self, oui: str) -> bool:
+        return True if self.accepts(oui) else super().is_drone(oui)
+
+
+class AstmF3411Handler(Handler):
+    """
+    Represents the handler for the ASTM F3411-22a Remote ID format.
+    """
+    def accepts(self, oui: str) -> bool:
+        return oui == AstmF3411Parser.oui
+
+    def parse(self, packet, oui: str) -> Optional[RemoteId]:
+        accepted = self.accepts(oui)
+
+        if not accepted:
+            return super().parse(packet, oui)
+
+        try:
+            (_, _, msg_type) = AstmF3411Parser.extract_header(packet)
+        except ParseRemoteIdError as err:
+            logging.warning(err)
+            return None
+
+        if msg_type == AstmF3411Parser.msg_type_four:
+            return AstmF3411Parser.parse_static_msg(packet, oui)
+        else:
+            logging.info("Unknown ASTM F3411-22a message type detected")
             return None
 
     def is_drone(self, oui: str) -> bool:
