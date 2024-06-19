@@ -29,8 +29,6 @@ def filter_frames(packet: Packet) -> None:
         while vendor_spec:
             layer_oui = Parser.dec2hex(vendor_spec.oui)
             print("layer_oui", layer_oui)
-            print("packet")
-            print(packet.show())
             if handler.is_drone(layer_oui):
                 # parse header
                 remote_id = handler.parse(vendor_spec.info, layer_oui)
