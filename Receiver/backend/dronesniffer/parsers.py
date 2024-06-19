@@ -456,7 +456,7 @@ class AstmF3411Parser(Parser):
     msg_size: int = 25
     msg_type_one: int = 1
     msg_type_four: int = 4
-    oui: str = "FA:0B:BC"
+    oui: str = "6A:5C:35"
 
     @staticmethod
     def _bytes_to_bits(byte_list: list[str]) -> list[int]:
