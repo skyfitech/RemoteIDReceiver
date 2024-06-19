@@ -23,7 +23,7 @@ def filter_frames(packet: Packet) -> None:
         packet (Packet): Wi-Fi frame.
     """
     # if packet.haslayer(Dot11Beacon):  # Monitor 802.11 beacon traffic
-    if packet.haslayer(Dot11Beacon):
+    # if packet.haslayer(Dot11Beacon):
     if packet.haslayer(Dot11EltVendorSpecific):  # check vendor specific ID -> 221
         vendor_spec: Dot11EltVendorSpecific = packet.getlayer(Dot11EltVendorSpecific)
         while vendor_spec:
