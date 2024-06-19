@@ -25,14 +25,15 @@ def filter_frames(packet: Packet) -> None:
     # if packet.haslayer(Dot11Beacon):  # Monitor 802.11 beacon traffic
     if packet.haslayer(Dot11Beacon):
         print("showing Dot11Beacon packet")
-        print(packet.show())
     if packet.haslayer(Dot11EltVendorSpecific):  # check vendor specific ID -> 221
         print("showing Dot11EltVendorSpecific packet")
-        print(packet.show())
         vendor_spec: Dot11EltVendorSpecific = packet.getlayer(Dot11EltVendorSpecific)
         print("vendor_spec", vendor_spec)
         while vendor_spec:
             layer_oui = Parser.dec2hex(vendor_spec.oui)
+            print("layer_oui", layer_oui)
+            print("packet")
+            print(packet.show())
             if handler.is_drone(layer_oui):
                 # parse header
                 remote_id = handler.parse(vendor_spec.info, layer_oui)
